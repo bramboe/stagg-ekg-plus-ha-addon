@@ -1,0 +1,283 @@
+"""Config flow for Fellow Stagg WiFi integration with discovery."""
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import logging
+from typing import Any
+
+import voluptuous as vol
+from homeassistant import config_entries
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResult
+
+from .const import CLI_STATE_MARKERS, DOMAIN
+
+CONF_BASE_URL = "base_url"
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def validate_kettle_cli(hass: HomeAssistant, base_url: str) -> bool:
+    """Validate during setup: execute status command (GET /cli?cmd=state); fail fast on connection issues."""
+    from aiohttp import ClientTimeout
+    url = f"{base_url.rstrip('/')}/cli?cmd=state"
+    try:
+        session = hass.helpers.aiohttp_client.async_get_clientsession(hass)
+        async with session.get(url, timeout=ClientTimeout(total=3)) as resp:
+            if resp.status != 200:
+                return False
+            text = await resp.text()
+            return any(marker in text for marker in CLI_STATE_MARKERS)
+    except Exception:  # noqa: S110
+        return False
+
+
+def _build_base_url(host: str, port: int | None = None) -> str:
+    """Build http base URL from host and optional port."""
+    if port and port != 80:
+        return f"http://{host}:{port}"
+    return f"http://{host}"
+
+
+class FellowStaggConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """UI-based config flow: host/URL (optional discover). Validate with status command during setup."""
+
+    VERSION = 1
+    CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL  # aligns with iot_class local_polling
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._discovered_base_url: str | None = None
+        self._discovered_devices: list[str] = []
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the initial step: manual URL or discover."""
+        if user_input is not None:
+            if user_input.get("discover"):
+                return await self.async_step_scan()
+            base_url = (user_input.get("base_url") or "").strip()
+            if not base_url:
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=vol.Schema({
+                        vol.Required("base_url", default=""): str,
+                        vol.Required("discover", default=False): bool,
+                    }),
+                    errors={"base": "base_url_required"},
+                )
+            if not base_url.startswith(("http://", "https://")):
+                base_url = f"http://{base_url}"
+            if not await validate_kettle_cli(self.hass, base_url):
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=vol.Schema({
+                        vol.Required("base_url", default=base_url): str,
+                        vol.Required("discover", default=False): bool,
+                    }),
+                    errors={"base": "cannot_connect"},
+                )
+            await self.async_set_unique_id(base_url)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=f"Fellow Stagg ({base_url})",
+                data={"base_url": base_url},
+            )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema({
+                vol.Required("base_url", default=""): str,
+                vol.Required("discover", default=False): bool,
+            }),
+            errors={},
+        )
+
+    async def async_step_zeroconf(
+        self, discovery_info: Any
+    ) -> FlowResult:
+        """Handle zeroconf discovery of HTTP services; validate Fellow Stagg CLI."""
+        host = (
+            getattr(discovery_info, "host", None)
+            or (discovery_info.get("host") if isinstance(discovery_info, dict) else None)
+            or getattr(discovery_info, "hostname", "")
+            or ""
+        )
+        port = (
+            getattr(discovery_info, "port", None)
+            or (discovery_info.get("port") if isinstance(discovery_info, dict) else None)
+            or 80
+        )
+        if not host:
+            return self.async_abort(reason="no_host")
+        # Skip loopback
+        if host.startswith("127.") or host == "::1":
+            return self.async_abort(reason="loopback")
+        base_url = _build_base_url(host, port)
+        if not await validate_kettle_cli(self.hass, base_url):
+            return self.async_abort(reason="not_fellow_stagg")
+        await self.async_set_unique_id(base_url)
+        self._abort_if_unique_id_configured()
+        self._discovered_base_url = base_url
+        return await self.async_step_zeroconf_confirm()
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm zeroconf-discovered kettle."""
+        if self._discovered_base_url is None:
+            return self.async_abort(reason="no_discovery")
+        if user_input is not None:
+            return self.async_create_entry(
+                title=f"Fellow Stagg ({self._discovered_base_url})",
+                data={"base_url": self._discovered_base_url},
+            )
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            description_placeholders={"base_url": self._discovered_base_url},
+            data_schema=vol.Schema({}),
+        )
+
+    async def async_step_scan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Scan the local network for Fellow Stagg kettles."""
+        if user_input is not None:
+            base_url = user_input.get("base_url")
+            if base_url:
+                await self.async_set_unique_id(base_url)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=f"Fellow Stagg ({base_url})",
+                    data={"base_url": base_url},
+                )
+            return await self.async_step_user()
+
+        # Collect local IPv4 networks (use HA network adapters if available)
+        networks_to_scan: list[ipaddress.IPv4Network] = []
+        try:
+            from homeassistant.components import network
+            adapters = await network.async_get_adapters(self.hass)
+            for adapter in adapters:
+                for ip_config in adapter.get("ipv4", []) or []:
+                    addr = ip_config.get("address")
+                    if not addr:
+                        continue
+                    try:
+                        ip = ipaddress.ip_address(addr)
+                        if ip.is_private:
+                            # Use /24 for the same subnet
+                            network_str = f"{addr.rsplit('.', 1)[0]}.0/24"
+                            net = ipaddress.IPv4Network(network_str, strict=False)
+                            if net not in networks_to_scan:
+                                networks_to_scan.append(net)
+                    except (ValueError, IndexError):
+                        continue
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.debug("Could not get adapters: %s", e)
+
+        if not networks_to_scan:
+            for net_str in ("192.168.0.0/24", "192.168.1.0/24", "10.0.0.0/24"):
+                try:
+                    networks_to_scan.append(ipaddress.IPv4Network(net_str))
+                except ValueError:
+                    pass
+
+        discovered: list[str] = []
+        sem = asyncio.Semaphore(20)
+
+        async def check_ip(ip_str: str) -> str | None:
+            base = f"http://{ip_str}"
+            if await validate_kettle_cli(self.hass, base):
+                return base
+            return None
+
+        async def scan_network(net: ipaddress.IPv4Network) -> None:
+            for ip in net.hosts():
+                async with sem:
+                    try:
+                        result = await asyncio.wait_for(
+                            check_ip(str(ip)), timeout=2.0
+                        )
+                        if result and result not in discovered:
+                            discovered.append(result)
+                    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                        pass
+
+        await asyncio.gather(*[scan_network(net) for net in networks_to_scan])
+
+        self._discovered_devices = sorted(discovered)
+        if not self._discovered_devices:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({
+                    vol.Required("base_url", default=""): str,
+                    vol.Required("discover", default=False): bool,
+                }),
+                errors={"base": "no_devices_found"},
+            )
+
+        if len(self._discovered_devices) == 1:
+            await self.async_set_unique_id(self._discovered_devices[0])
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=f"Fellow Stagg ({self._discovered_devices[0]})",
+                data={"base_url": self._discovered_devices[0]},
+            )
+
+        return self.async_show_form(
+            step_id="scan",
+            data_schema=vol.Schema({
+                vol.Required("base_url"): vol.In(
+                    {url: url for url in self._discovered_devices}
+                ),
+            }),
+            description_placeholders={"count": str(len(self._discovered_devices))},
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Reconfigure: change base URL (Gold: integration can be reconfigured via UI)."""
+        # Prefer HA 2024.10+ helper; fallback for older versions
+        entry = (
+            self._get_reconfigure_entry()
+            if hasattr(self, "_get_reconfigure_entry")
+            else self.hass.config_entries.async_get_entry(self.context.get("entry_id", ""))
+        )
+        if entry is None:
+            return self.async_abort(reason="no_discovery")
+
+        if user_input is not None:
+            base_url = (user_input.get(CONF_BASE_URL) or "").strip()
+            if not base_url:
+                return self.async_show_form(
+                    step_id="reconfigure",
+                    data_schema=vol.Schema({
+                        vol.Required(CONF_BASE_URL, default=entry.data.get(CONF_BASE_URL, "")): str,
+                    }),
+                    errors={"base": "base_url_required"},
+                )
+            if not base_url.startswith(("http://", "https://")):
+                base_url = f"http://{base_url}"
+            if not await validate_kettle_cli(self.hass, base_url):
+                return self.async_show_form(
+                    step_id="reconfigure",
+                    data_schema=vol.Schema({
+                        vol.Required(CONF_BASE_URL, default=base_url): str,
+                    }),
+                    errors={"base": "cannot_connect"},
+                )
+            return self.async_update_reload_and_abort(
+                entry, data_updates={CONF_BASE_URL: base_url}
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(CONF_BASE_URL, default=entry.data.get(CONF_BASE_URL, "")): str,
+            }),
+            description_placeholders={"base_url": entry.data.get(CONF_BASE_URL, "")},
+        )

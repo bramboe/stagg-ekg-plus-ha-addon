@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Fellow Stagg EKG Pro (WiFi)",
+        "description": "Enter the kettle base URL (e.g. http://192.168.1.32) or check **Discover on network** to search for kettles on your LAN.",
+        "data": {
+          "base_url": "Base URL",
+          "discover": "Discover on network"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Discovered Fellow Stagg kettle",
+        "description": "Do you want to add the kettle at {base_url}?"
+      },
+      "scan": {
+        "title": "Select kettle",
+        "description": "Found {count} kettle(s) on your network. Select one to add.",
+        "data": {
+          "base_url": "Kettle"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Fellow Stagg kettle",
+        "description": "Update the kettle base URL (current: {base_url}).",
+        "data": {
+          "base_url": "Base URL"
+        }
+      }
+    },
+    "error": {
+      "base_url_required": "Please enter the kettle base URL or use Discover.",
+      "cannot_connect": "Could not connect to the kettle. Check the URL and that the device is on.",
+      "no_devices_found": "No Fellow Stagg kettles found on the network."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_host": "No host in discovery info.",
+      "loopback": "Ignoring loopback address.",
+      "not_fellow_stagg": "Discovered device is not a Fellow Stagg kettle.",
+      "no_discovery": "No discovery data.",
+      "reconfigure_successful": "Reconfiguration successful. The integration will reload."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "fellow_stagg": {
+        "power": { "name": "Power" },
+        "current_temp": { "name": "Current temperature" },
+        "target_temp": { "name": "Target temperature" },
+        "hold": { "name": "Hold mode" },
+        "lifted": { "name": "Kettle position" },
+        "countdown": { "name": "Countdown" },
+        "clock": { "name": "Clock" },
+        "schedule_mode": { "name": "Schedule mode" },
+        "water_stabilized": { "name": "Water stabilized" }
+      }
+    },
+    "switch": {
+      "fellow_stagg": {
+        "power": { "name": "Power" },
+        "sync_clock": { "name": "Sync clock" },
+        "live_graph": { "name": "Live heating graph" }
+      }
+    },
+    "number": {
+      "fellow_stagg": {
+        "target_temp": { "name": "Target temperature" },
+        "schedule_temp": { "name": "Schedule temperature" }
+      }
+    },
+    "select": {
+      "fellow_stagg": {
+        "schedule_mode": { "name": "Schedule mode" },
+        "clock_mode": { "name": "Clock display mode" }
+      }
+    },
+    "time": {
+      "fellow_stagg": {
+        "schedule_time": { "name": "Schedule time" }
+      }
+    },
+    "button": {
+      "fellow_stagg": {
+        "update_schedule": { "name": "Update schedule" }
+      }
+    },
+    "water_heater": {
+      "fellow_stagg": {
+        "water_heater": { "name": "Water heater" }
+      }
+    }
+  }
+}
