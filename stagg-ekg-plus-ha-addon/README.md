@@ -119,4 +119,4 @@ Requires [pytest-homeassistant-custom-component](https://github.com/MatthewFlamm
 
 This integration is structured to meet the [Platinum](https://www.home-assistant.io/docs/quality_scale/#-platinum) tier: fully async, typed, coordinator-based polling, UI config flow with discovery and reconfiguration, diagnostics, translations, and tests. Rule tracking: `custom_components/fellow_stagg/quality_scale.yaml`.
 
-Based on the [stagg-ekg-plus-ha](https://github.com/levi/stagg-ekg-plus) integration (HTTP CLI). This version is WiFi-only, with no Bluetooth and no HACS dependency, and adds discovery and reconfiguration so devices on the same network can show up and be reconfigured from the UI.
+Originally based on [levi/stagg-ekg-plus](https://github.com/levi/stagg-ekg-plus) and since substantially rewritten. This version is WiFi-only, with no Bluetooth and no HACS dependency, and adds discovery and reconfiguration so devices on the same network can show up and be reconfigured from the UI.
